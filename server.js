@@ -1,21 +1,17 @@
-import express from 'express';
-import mongoose from 'mongoose';
-import cors from 'cors';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { Bill, User, locationDefaults } from './models/Bill.js';
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Bill, User, locationDefaults } = require('./models/Bill');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = 'your-secret-key';
 
-// Enable CORS for Vercel deployment
+// Enable CORS for all routes - MUST BE FIRST
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://jay-ganesh-5udapodgf-rohitjadhav7174s-projects.vercel.app', // Replace with your actual frontend URL
-    process.env.FRONTEND_URL
-  ].filter(Boolean),
+  origin: true, // Allow any origin for testing
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -24,8 +20,7 @@ app.use(cors({
 }));
 
 // Body parser
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
 
 // Log all requests
 app.use((req, res, next) => {
@@ -33,23 +28,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// MongoDB connection with better error handling
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.uh0sdkg.mongodb.net/billing-system';
-
-const connectDB = async () => {
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log('✅ MongoDB connected successfully');
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    process.exit(1);
-  }
-};
-
-connectDB();
+// Connect to MongoDB
+mongoose.connect('mongodb+srv://Rohit:2428@cluster0.uh0sdkg.mongodb.net/', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ MongoDB connected successfully'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -72,9 +57,7 @@ const authenticateToken = (req, res, next) => {
 // Test route
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Billing System API is running on Vercel!',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
+    message: 'Billing System API is running!',
     endpoints: {
       health: '/api/health',
       register: '/api/register (POST)',
@@ -89,11 +72,10 @@ app.get('/', (req, res) => {
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
-    message: 'Server is running on Vercel!',
+    message: 'Server is running!',
     timestamp: new Date().toISOString(),
     status: 'OK',
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-    environment: process.env.NODE_ENV || 'development'
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
   });
 });
 
@@ -421,22 +403,106 @@ app.delete('/api/bills/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Handle 404
-app.use('*', (req, res) => {
-  res.status(404).json({ 
-    message: 'Route not found',
-    path: req.originalUrl
-  });
+// Get bill statistics
+app.get('/api/bills-stats/:location', authenticateToken, async (req, res) => {
+  try {
+    const { location } = req.params;
+    
+    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
+      return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
+    }
+    
+    const stats = await Bill.aggregate([
+      { $match: { location } },
+      {
+        $group: {
+          _id: null,
+          totalBills: { $sum: 1 },
+          totalAmount: { $sum: "$totalAmount" },
+          averageAmount: { $avg: "$totalAmount" },
+          minAmount: { $min: "$totalAmount" },
+          maxAmount: { $max: "$totalAmount" }
+        }
+      }
+    ]);
+    
+    const recentBills = await Bill.find({ location })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('billNumber date totalAmount');
+    
+    res.json({
+      location,
+      stats: stats[0] || {
+        totalBills: 0,
+        totalAmount: 0,
+        averageAmount: 0,
+        minAmount: 0,
+        maxAmount: 0
+      },
+      recentBills
+    });
+  } catch (error) {
+    console.error('Get bill stats error:', error);
+    res.status(500).json({ message: 'Error fetching bill statistics', error: error.message });
+  }
+});
+
+// Search bills
+app.get('/api/bills-search/:location', authenticateToken, async (req, res) => {
+  try {
+    const { location } = req.params;
+    const { query } = req.query;
+    
+    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
+      return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
+    }
+    
+    if (!query) {
+      return res.status(400).json({ message: 'Search query is required' });
+    }
+    
+    const bills = await Bill.find({
+      location,
+      $or: [
+        { billNumber: { $regex: query, $options: 'i' } },
+        { 'supplier.name': { $regex: query, $options: 'i' } },
+        { 'buyer.name': { $regex: query, $options: 'i' } },
+        { 'items.description': { $regex: query, $options: 'i' } }
+      ]
+    })
+    .populate('createdBy', 'username')
+    .sort({ createdAt: -1 });
+    
+    res.json({
+      location,
+      query,
+      count: bills.length,
+      bills
+    });
+  } catch (error) {
+    console.error('Search bills error:', error);
+    res.status(500).json({ message: 'Error searching bills', error: error.message });
+  }
+});
+
+// Simple 404 handler for all other routes
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ 
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'production' ? {} : err.message
-  });
+  res.status(500).json({ message: 'Internal server error' });
 });
 
-// Export for Vercel
-export default app;
+app.listen(PORT, () => {
+  console.log('='.repeat(50));
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📍 API Base: http://localhost:${PORT}/api`);
+  console.log(`🌐 CORS enabled for all origins`);
+  console.log('📊 Available Locations:', Object.keys(locationDefaults).join(', '));
+  console.log('='.repeat(50));
+});
