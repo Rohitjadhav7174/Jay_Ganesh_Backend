@@ -29,7 +29,7 @@ app.use((req, res, next) => {
 });
 
 // Connect to MongoDB
-mongoose.connect('mongodb+srv://Rohit:2428@cluster0.uh0sdkg.mongodb.net/', {
+mongoose.connect('mongodb+srv://Rohit:2428@cluster0.uh0sdkg.mongodb.net/?appName=Cluster0', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
