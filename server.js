@@ -7,7 +7,7 @@ const { Bill, User, locationDefaults } = require('./models/Bill');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/?appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/test?retryWrites=true&w=majority';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 
@@ -129,7 +129,36 @@ app.get('/api/location-defaults', (req, res) => {
     res.status(500).json({ message: 'Error fetching location defaults', error: error.message });
   }
 });
+// Test MongoDB connection endpoint
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const dbStatus = mongoose.connection.readyState;
+    const statusMap = {
+      0: 'Disconnected',
+      1: 'Connected', 
+      2: 'Connecting',
+      3: 'Disconnecting'
+    };
 
+    // Try to perform a simple database operation
+    const userCount = await User.countDocuments();
+    
+    res.json({
+      message: 'Database test successful',
+      connectionStatus: statusMap[dbStatus],
+      userCount: userCount,
+      mongodbUri: process.env.MONGODB_URI ? 'Set (hidden)' : 'Not set',
+      nodeEnv: process.env.NODE_ENV
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: 'Database test failed',
+      error: error.message,
+      connectionStatus: mongoose.connection.readyState,
+      mongodbUri: process.env.MONGODB_URI ? 'Set (hidden)' : 'Not set'
+    });
+  }
+});
 // Register (for initial setup)
 app.post('/api/register', async (req, res) => {
   try {
