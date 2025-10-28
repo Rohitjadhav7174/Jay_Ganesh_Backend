@@ -10,7 +10,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 const app = express();
 
-// CORS - Allow all origins for now
+// CORS - Allow all origins for Vercel
 app.use(cors({
   origin: true,
   credentials: true,
@@ -27,6 +27,52 @@ app.use((req, res, next) => {
   console.log(`📥 ${req.method} ${req.path} - ${new Date().toISOString()}`);
   next();
 });
+
+// MongoDB Connection with Vercel optimization
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) {
+    console.log('✅ Using existing MongoDB connection');
+    return;
+  }
+
+  try {
+    console.log('🔄 Establishing new MongoDB connection...');
+    
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 30000,
+      bufferCommands: false,
+    });
+
+    isConnected = mongoose.connection.readyState === 1;
+    
+    mongoose.connection.on('connected', () => {
+      console.log('✅ MongoDB connected successfully');
+      isConnected = true;
+    });
+
+    mongoose.connection.on('error', (err) => {
+      console.error('❌ MongoDB connection error:', err);
+      isConnected = false;
+    });
+
+    mongoose.connection.on('disconnected', () => {
+      console.log('🔌 MongoDB disconnected');
+      isConnected = false;
+    });
+
+  } catch (error) {
+    console.error('💥 MongoDB connection failed:', error.message);
+    isConnected = false;
+  }
+};
+
+// Connect to DB on server start
+connectDB();
 
 // MongoDB Schemas
 const billSchema = new mongoose.Schema({
@@ -155,22 +201,10 @@ const User = mongoose.model('User', userSchema);
 
 // Database connection middleware
 app.use(async (req, res, next) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      console.log('🔄 Connecting to MongoDB...');
-      await mongoose.connect(MONGODB_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 30000,
-      });
-      console.log('✅ MongoDB connected successfully');
-    }
-    next();
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
-    next(); // Continue to next middleware even if DB fails
+  if (!isConnected) {
+    await connectDB();
   }
+  next();
 });
 
 // Authentication middleware
@@ -204,12 +238,12 @@ app.get('/', (req, res) => {
   };
   
   res.json({ 
-    message: 'Billing System API is running!',
+    message: 'Billing System API is running on Vercel!',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     database: statusMap[dbStatus],
     databaseCode: dbStatus,
-    vercel: false // Running locally
+    vercel: true
   });
 });
 
@@ -223,7 +257,6 @@ app.get('/api/health', async (req, res) => {
     3: 'Disconnecting'
   };
   
-  // Test database with a simple query
   let dbTest = 'Not tested';
   try {
     if (dbStatus === 1) {
@@ -244,7 +277,7 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Test database connection with detailed info
+// Test database connection
 app.get('/api/test-db', async (req, res) => {
   try {
     const dbStatus = mongoose.connection.readyState;
@@ -252,38 +285,15 @@ app.get('/api/test-db', async (req, res) => {
     let connectionInfo = {
       connectionState: dbStatus,
       connectionStateText: ['Disconnected', 'Connected', 'Connecting', 'Disconnecting'][dbStatus],
-      mongodbUri: process.env.MONGODB_URI ? 'Set in environment' : 'Not set in environment',
       environment: process.env.NODE_ENV || 'development'
     };
 
-    // If not connected, try to connect
-    if (dbStatus !== 1) {
-      console.log('🔄 Attempting to connect to MongoDB...');
-      try {
-        await mongoose.connect(MONGODB_URI, {
-          useNewUrlParser: true,
-          useUnifiedTopology: true,
-          serverSelectionTimeoutMS: 5000,
-        });
-        connectionInfo.reconnected = true;
-        connectionInfo.connectionState = mongoose.connection.readyState;
-        connectionInfo.connectionStateText = 'Connected';
-      } catch (connectError) {
-        connectionInfo.connectionError = connectError.message;
-      }
-    }
-
-    // If connected, test with queries
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const userCount = await User.countDocuments();
-        const billCount = await Bill.countDocuments();
-        connectionInfo.userCount = userCount;
-        connectionInfo.billCount = billCount;
-        connectionInfo.databaseTest = 'Successful';
-      } catch (queryError) {
-        connectionInfo.queryError = queryError.message;
-      }
+    if (dbStatus === 1) {
+      const userCount = await User.countDocuments();
+      const billCount = await Bill.countDocuments();
+      connectionInfo.userCount = userCount;
+      connectionInfo.billCount = billCount;
+      connectionInfo.databaseTest = 'Successful';
     }
 
     res.json({
@@ -303,15 +313,6 @@ app.get('/api/test-db', async (req, res) => {
 // Create default user endpoint
 app.post('/api/create-default-user', async (req, res) => {
   try {
-    // Check MongoDB connection first
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(500).json({ 
-        message: 'Database not connected', 
-        connectionState: mongoose.connection.readyState 
-      });
-    }
-
-    // Check if user already exists
     const existingUser = await User.findOne({ username: 'admin' });
     if (existingUser) {
       return res.json({ 
@@ -321,7 +322,6 @@ app.post('/api/create-default-user', async (req, res) => {
       });
     }
 
-    // Create default user
     const hashedPassword = await bcrypt.hash('admin123', 10);
     const user = new User({
       username: 'admin',
@@ -339,8 +339,7 @@ app.post('/api/create-default-user', async (req, res) => {
     console.error('Create default user error:', error);
     res.status(500).json({ 
       message: 'Error creating default user', 
-      error: error.message,
-      connectionState: mongoose.connection.readyState
+      error: error.message
     });
   }
 });
@@ -487,11 +486,9 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'At least one item is required' });
     }
     
-    // Calculate totals
     const subtotal = otherData.items.reduce((sum, item) => sum + (item.amount || 0), 0);
     const totalAmount = subtotal;
     
-    // Get defaults for the location
     const defaults = locationDefaults[location] || locationDefaults.Ratanagiri;
     
     const billData = {
@@ -526,25 +523,12 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
-// FIXED: 404 handler - Use a simple approach without wildcard
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
     message: 'Route not found',
     path: req.originalUrl,
-    method: req.method,
-    availableEndpoints: [
-      'GET /',
-      'GET /api/health',
-      'GET /api/test-db',
-      'POST /api/create-default-user',
-      'GET /api/location-defaults',
-      'GET /api/location-defaults/:location',
-      'POST /api/register',
-      'POST /api/login',
-      'GET /api/bills',
-      'GET /api/bills/:location',
-      'POST /api/bills'
-    ]
+    method: req.method
   });
 });
 
@@ -557,31 +541,16 @@ app.use((err, req, res, next) => {
   });
 });
 
-// For local development only
-if (require.main === module) {
-  const PORT = process.env.PORT || 5001;
-  
-  // Connect to MongoDB when starting locally
-  mongoose.connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => {
-    console.log('✅ MongoDB connected successfully');
-    app.listen(PORT, () => {
-      console.log('='.repeat(60));
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📍 Health: http://localhost:${PORT}/api/health`);
-      console.log(`📍 Test DB: http://localhost:${PORT}/api/test-db`);
-      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log('='.repeat(60));
-    });
-  })
-  .catch((error) => {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  });
-}
-
 // Export for Vercel
 module.exports = app;
+
+// For local development
+if (require.main === module) {
+  const PORT = process.env.PORT || 5001;
+  app.listen(PORT, () => {
+    console.log('='.repeat(60));
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📍 Health: http://localhost:${PORT}/api/health`);
+    console.log('='.repeat(60));
+  });
+}
