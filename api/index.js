@@ -2,7 +2,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/billing-system?retryWrites=true&w=majority';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/test?retryWrites=true&w=majority';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 let cachedClient = null;
@@ -12,13 +12,20 @@ async function connectToDatabase() {
     return cachedClient;
   }
 
-  const client = await MongoClient.connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
+  try {
+    console.log('🔄 Connecting to MongoDB...');
+    const client = await MongoClient.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
 
-  cachedClient = client;
-  return client;
+    console.log('✅ MongoDB connected successfully');
+    cachedClient = client;
+    return client;
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    throw error;
+  }
 }
 
 // Location-based default data
@@ -99,16 +106,20 @@ module.exports = async (req, res) => {
   }
 
   try {
+    console.log(`📥 ${req.method} ${req.url}`);
+
     const client = await connectToDatabase();
     const db = client.db('billing-system');
 
-    const { path, method, headers } = req;
+    const { url, method, headers } = req;
+    const path = url.split('?')[0]; // Remove query parameters
     const pathParts = path.split('/').filter(part => part);
 
-    console.log(`Request: ${method} ${path}`);
+    console.log(`Processing: ${method} ${path}`);
 
     // Root endpoint
     if (path === '/' || path === '') {
+      console.log('Serving root endpoint');
       res.json({
         message: '✅ Billing System API is running on Vercel!',
         timestamp: new Date().toISOString(),
@@ -131,6 +142,7 @@ module.exports = async (req, res) => {
 
     // Health check
     if (path === '/api/health') {
+      console.log('Serving health check');
       res.json({
         message: '✅ Server is running!',
         database: 'Connected',
@@ -142,52 +154,71 @@ module.exports = async (req, res) => {
 
     // Test database
     if (path === '/api/test-db') {
-      const usersCollection = db.collection('users');
-      const billsCollection = db.collection('bills');
-      
-      const userCount = await usersCollection.countDocuments();
-      const billCount = await billsCollection.countDocuments();
-      
-      res.json({
-        message: 'Database test completed',
-        userCount: userCount,
-        billCount: billCount,
-        database: 'Connected'
-      });
+      console.log('Testing database connection');
+      try {
+        const usersCollection = db.collection('users');
+        const billsCollection = db.collection('bills');
+        
+        const userCount = await usersCollection.countDocuments();
+        const billCount = await billsCollection.countDocuments();
+        
+        res.json({
+          message: 'Database test completed',
+          userCount: userCount,
+          billCount: billCount,
+          database: 'Connected'
+        });
+      } catch (dbError) {
+        console.error('Database test error:', dbError);
+        res.status(500).json({
+          message: 'Database test failed',
+          error: dbError.message
+        });
+      }
       return;
     }
 
     // Create default user
     if (path === '/api/create-default-user' && method === 'POST') {
-      const usersCollection = db.collection('users');
-      
-      const existingUser = await usersCollection.findOne({ username: 'admin' });
-      if (existingUser) {
+      console.log('Creating default user');
+      try {
+        const usersCollection = db.collection('users');
+        
+        const existingUser = await usersCollection.findOne({ username: 'admin' });
+        if (existingUser) {
+          res.json({
+            message: 'Default user already exists',
+            username: 'admin',
+            password: 'admin123'
+          });
+          return;
+        }
+
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        await usersCollection.insertOne({
+          username: 'admin',
+          password: hashedPassword,
+          createdAt: new Date()
+        });
+
         res.json({
-          message: 'Default user already exists',
+          message: 'Default user created successfully!',
           username: 'admin',
           password: 'admin123'
         });
-        return;
+      } catch (userError) {
+        console.error('Create user error:', userError);
+        res.status(500).json({
+          message: 'Error creating default user',
+          error: userError.message
+        });
       }
-
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await usersCollection.insertOne({
-        username: 'admin',
-        password: hashedPassword,
-        createdAt: new Date()
-      });
-
-      res.json({
-        message: 'Default user created successfully!',
-        username: 'admin',
-        password: 'admin123'
-      });
       return;
     }
 
     // Get location defaults
     if (path === '/api/location-defaults' && method === 'GET') {
+      console.log('Serving location defaults');
       res.json(locationDefaults);
       return;
     }
@@ -195,6 +226,7 @@ module.exports = async (req, res) => {
     // Get specific location defaults
     if (pathParts[0] === 'api' && pathParts[1] === 'location-defaults' && pathParts[2] && method === 'GET') {
       const location = pathParts[2];
+      console.log(`Serving location defaults for: ${location}`);
       const defaults = locationDefaults[location] || locationDefaults.Ratanagiri;
       
       res.json({
@@ -204,159 +236,8 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Register user
-    if (path === '/api/register' && method === 'POST') {
-      try {
-        const { username, password } = req.body;
-        
-        if (!username || !password) {
-          return res.status(400).json({ message: 'Username and password are required' });
-        }
-        
-        const usersCollection = db.collection('users');
-        const existingUser = await usersCollection.findOne({ username });
-        if (existingUser) {
-          return res.status(400).json({ message: 'User already exists' });
-        }
-        
-        const hashedPassword = await bcrypt.hash(password, 10);
-        await usersCollection.insertOne({
-          username,
-          password: hashedPassword,
-          createdAt: new Date()
-        });
-        
-        res.status(201).json({ message: 'User created successfully' });
-      } catch (error) {
-        res.status(500).json({ message: 'Error creating user', error: error.message });
-      }
-      return;
-    }
-
-    // Login
-    if (path === '/api/login' && method === 'POST') {
-      try {
-        const { username, password } = req.body;
-        
-        if (!username || !password) {
-          return res.status(400).json({ message: 'Username and password are required' });
-        }
-        
-        const usersCollection = db.collection('users');
-        const user = await usersCollection.findOne({ username });
-        if (!user) {
-          return res.status(400).json({ message: 'Invalid credentials' });
-        }
-        
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-          return res.status(400).json({ message: 'Invalid credentials' });
-        }
-        
-        const token = jwt.sign({ userId: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-        
-        res.json({ 
-          message: 'Login successful',
-          token, 
-          user: { id: user._id.toString(), username: user.username } 
-        });
-      } catch (error) {
-        res.status(500).json({ message: 'Server error', error: error.message });
-      }
-      return;
-    }
-
-    // Get all bills (protected) - FIXED: Handle missing authorization header
-    if (path === '/api/bills' && method === 'GET') {
-      try {
-        const user = authenticateToken(req);
-        const billsCollection = db.collection('bills');
-        
-        const bills = await billsCollection.find().sort({ createdAt: -1 }).toArray();
-        res.json(bills);
-      } catch (authError) {
-        res.status(401).json({ message: authError.message });
-      }
-      return;
-    }
-
-    // Get bills by location (protected) - FIXED: Handle missing authorization header
-    if (pathParts[0] === 'api' && pathParts[1] === 'bills' && pathParts[2] && method === 'GET') {
-      try {
-        const user = authenticateToken(req);
-        const location = pathParts[2];
-        
-        if (!['Ratanagiri', 'Singhururg'].includes(location)) {
-          return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
-        }
-        
-        const billsCollection = db.collection('bills');
-        const bills = await billsCollection.find({ location }).sort({ createdAt: -1 }).toArray();
-        
-        res.json({
-          location,
-          count: bills.length,
-          bills
-        });
-      } catch (authError) {
-        res.status(401).json({ message: authError.message });
-      }
-      return;
-    }
-
-    // Create new bill (protected) - FIXED: Handle missing authorization header
-    if (path === '/api/bills' && method === 'POST') {
-      try {
-        const user = authenticateToken(req);
-        const { location, ...otherData } = req.body;
-        
-        if (!otherData.billNumber || !otherData.date) {
-          return res.status(400).json({ message: 'Bill number and date are required' });
-        }
-        
-        if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
-          return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
-        }
-        
-        if (!otherData.items || !Array.isArray(otherData.items) || otherData.items.length === 0) {
-          return res.status(400).json({ message: 'At least one item is required' });
-        }
-        
-        const subtotal = otherData.items.reduce((sum, item) => sum + (item.amount || 0), 0);
-        const totalAmount = subtotal;
-        
-        const defaults = locationDefaults[location] || locationDefaults.Ratanagiri;
-        
-        const billData = {
-          ...defaults,
-          ...otherData,
-          location,
-          subtotal,
-          totalAmount,
-          createdBy: user.userId,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-        
-        const billsCollection = db.collection('bills');
-        const result = await billsCollection.insertOne(billData);
-        
-        const newBill = {
-          _id: result.insertedId,
-          ...billData
-        };
-        
-        res.status(201).json({
-          message: 'Bill created successfully',
-          bill: newBill
-        });
-      } catch (authError) {
-        res.status(401).json({ message: authError.message });
-      }
-      return;
-    }
-
     // Handle unknown routes
+    console.log(`Route not found: ${method} ${path}`);
     res.status(404).json({
       message: 'Route not found',
       path: path,
@@ -367,20 +248,21 @@ module.exports = async (req, res) => {
         'GET /api/test-db',
         'POST /api/create-default-user',
         'GET /api/location-defaults',
-        'GET /api/location-defaults/:location',
-        'POST /api/register',
-        'POST /api/login',
-        'GET /api/bills',
-        'GET /api/bills/:location',
-        'POST /api/bills'
+        'GET /api/location-defaults/:location'
       ]
     });
 
   } catch (error) {
-    console.error('Server Error:', error);
+    console.error('💥 Server Error Details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
     res.status(500).json({
       message: 'Internal server error',
-      error: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message
+      error: error.message, // Show actual error in production for debugging
+      timestamp: new Date().toISOString()
     });
   }
 };
