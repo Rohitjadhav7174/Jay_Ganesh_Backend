@@ -3,58 +3,175 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Bill, User, locationDefaults } = require('./models/Bill');
 
-const app = express();
-const PORT = process.env.PORT || 5001;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/?appName=Cluster0';
+// Environment variables
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/test?retryWrites=true&w=majority';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
+const app = express();
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://your-frontend-app.vercel.app' // Update this
-];
-// Enable CORS for all routes - MUST BE FIRST
+// CORS - Allow all origins for now
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
-app.use(express.json());
 // Body parser
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// Log all requests
+// Request logging
 app.use((req, res, next) => {
-  console.log(`📥 ${req.method} ${req.path}`);
+  console.log(`📥 ${req.method} ${req.path} - ${new Date().toISOString()}`);
   next();
 });
 
-// Connect to MongoDB
-const connectDB = async () => {
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log('✅ MongoDB connected successfully');
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    // Don't exit process in serverless environment
+// MongoDB Schemas
+const billSchema = new mongoose.Schema({
+  billNumber: {
+    type: String,
+    required: true,
+    trim: true,
+    unique: true
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  location: {
+    type: String,
+    required: true,
+    enum: ['Ratanagiri', 'Singhururg']
+  },
+  supplier: {
+    name: { type: String, required: true },
+    address: { type: String, required: true },
+    gstin: { type: String, default: "" }
+  },
+  buyer: {
+    name: { type: String, required: true },
+    address: { type: String, required: true },
+    pan: { type: String, required: true }
+  },
+  deliveryNote: { type: String, default: "" },
+  modeOfPayment: { type: String, default: "BANK Transaction" },
+  dispatchedThrough: { type: String, default: "" },
+  destination: { type: String, required: true },
+  items: [{
+    description: { type: String, required: true },
+    hsnSac: { type: String, default: "" },
+    gstRate: { type: String, default: "" },
+    quantity: { type: Number, required: true, min: 0 },
+    rate: { type: Number, required: true, min: 0 },
+    unit: { type: String, default: "KG" },
+    amount: { type: Number, required: true, min: 0 }
+  }],
+  subtotal: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  totalAmount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  bankDetails: {
+    name: { type: String, required: true },
+    accountNumber: { type: String, required: true },
+    branch: { type: String, required: true },
+    ifsc: { type: String, default: "" }
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  }
+}, {
+  timestamps: true
+});
+
+const userSchema = new mongoose.Schema({
+  username: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  password: {
+    type: String,
+    required: true
+  }
+});
+
+// Location-based default data
+const locationDefaults = {
+  Ratanagiri: {
+    supplier: {
+      name: "Sanvi Trading company",
+      address: "H-3 nancy cottage Sant Dnyaneshwar Road , \n Near Jain Mandir,Nancy Bus Depo,\n Borivali(East) , Mumbai-400066",
+      GSTIN: "27AJOPM9365R1ZX" 
+    },
+    buyer: {
+      name: "Jay Ganesh Transport",
+      address: "Shahu Market Yard, Kolhapur - 416005",
+      pan: "AQRPJ6441R"
+    },
+    bankDetails: {
+      name: "BANK OF BARODA",
+      accountNumber: "37560200000273",
+      branch: "Ruikar Colony, Kolhapur, Maharashtra",
+      ifsc: "BARB0RUIKAR"
+    },
+    destination: "Ratanagiri",
+    modeOfPayment: "BANK Transaction"
+  },
+  Singhururg: {
+    supplier: {
+      name: "PARSHWANATH TRADERS",
+      address: "RAJMATA COMPLEX, PARLI, PARLI-V, Beed. Maharasthra 431515",
+      gstin: ""
+    },
+    buyer: {
+      name: "A.R.Trading Company",
+      address: "Shahu Market Yard, Kolhapur - 416005",
+      pan: "AQRPJ6441R"
+    },
+    bankDetails: {
+      name: "kotak mahindra bank",
+      accountNumber: "2348281967",
+      branch: "Rajarampuri, Kolhapur, Maharashtra",
+      ifsc: "KKBK0000692"
+    },
+    destination: "Singhururg",
+    modeOfPayment: "BANK Transaction"
   }
 };
-connectDB();
+
+const Bill = mongoose.model('Bill', billSchema);
+const User = mongoose.model('User', userSchema);
+
+// Database connection middleware
+app.use(async (req, res, next) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      console.log('🔄 Connecting to MongoDB...');
+      await mongoose.connect(MONGODB_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 30000,
+      });
+      console.log('✅ MongoDB connected successfully');
+    }
+    next();
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    next(); // Continue to next middleware even if DB fails
+  }
+});
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -74,29 +191,158 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Test route
+// Routes
+
+// Root endpoint
 app.get('/', (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const statusMap = {
+    0: 'Disconnected',
+    1: 'Connected',
+    2: 'Connecting',
+    3: 'Disconnecting'
+  };
+  
   res.json({ 
     message: 'Billing System API is running!',
-    endpoints: {
-      health: '/api/health',
-      register: '/api/register (POST)',
-      login: '/api/login (POST)',
-      bills: '/api/bills (GET, POST)',
-      billsByLocation: '/api/bills/:location (GET)',
-      locationDefaults: '/api/location-defaults/:location (GET)'
-    }
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    database: statusMap[dbStatus],
+    databaseCode: dbStatus,
+    vercel: false // Running locally
   });
 });
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const statusMap = {
+    0: 'Disconnected',
+    1: 'Connected',
+    2: 'Connecting',
+    3: 'Disconnecting'
+  };
+  
+  // Test database with a simple query
+  let dbTest = 'Not tested';
+  try {
+    if (dbStatus === 1) {
+      const count = await User.countDocuments();
+      dbTest = `Working (${count} users)`;
+    }
+  } catch (error) {
+    dbTest = `Error: ${error.message}`;
+  }
+  
   res.json({ 
     message: 'Server is running!',
     timestamp: new Date().toISOString(),
     status: 'OK',
-    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+    database: statusMap[dbStatus],
+    databaseTest: dbTest,
+    environment: process.env.NODE_ENV || 'development'
   });
+});
+
+// Test database connection with detailed info
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const dbStatus = mongoose.connection.readyState;
+    
+    let connectionInfo = {
+      connectionState: dbStatus,
+      connectionStateText: ['Disconnected', 'Connected', 'Connecting', 'Disconnecting'][dbStatus],
+      mongodbUri: process.env.MONGODB_URI ? 'Set in environment' : 'Not set in environment',
+      environment: process.env.NODE_ENV || 'development'
+    };
+
+    // If not connected, try to connect
+    if (dbStatus !== 1) {
+      console.log('🔄 Attempting to connect to MongoDB...');
+      try {
+        await mongoose.connect(MONGODB_URI, {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+          serverSelectionTimeoutMS: 5000,
+        });
+        connectionInfo.reconnected = true;
+        connectionInfo.connectionState = mongoose.connection.readyState;
+        connectionInfo.connectionStateText = 'Connected';
+      } catch (connectError) {
+        connectionInfo.connectionError = connectError.message;
+      }
+    }
+
+    // If connected, test with queries
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const userCount = await User.countDocuments();
+        const billCount = await Bill.countDocuments();
+        connectionInfo.userCount = userCount;
+        connectionInfo.billCount = billCount;
+        connectionInfo.databaseTest = 'Successful';
+      } catch (queryError) {
+        connectionInfo.queryError = queryError.message;
+      }
+    }
+
+    res.json({
+      message: 'Database connection test completed',
+      ...connectionInfo
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      message: 'Database test failed',
+      error: error.message,
+      connectionState: mongoose.connection.readyState
+    });
+  }
+});
+
+// Create default user endpoint
+app.post('/api/create-default-user', async (req, res) => {
+  try {
+    // Check MongoDB connection first
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(500).json({ 
+        message: 'Database not connected', 
+        connectionState: mongoose.connection.readyState 
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ username: 'admin' });
+    if (existingUser) {
+      return res.json({ 
+        message: 'Default user already exists',
+        username: 'admin',
+        password: 'admin123'
+      });
+    }
+
+    // Create default user
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const user = new User({
+      username: 'admin',
+      password: hashedPassword
+    });
+
+    await user.save();
+    
+    res.status(201).json({ 
+      message: 'Default user created successfully!',
+      username: 'admin',
+      password: 'admin123'
+    });
+  } catch (error) {
+    console.error('Create default user error:', error);
+    res.status(500).json({ 
+      message: 'Error creating default user', 
+      error: error.message,
+      connectionState: mongoose.connection.readyState
+    });
+  }
 });
 
 // Get location defaults
@@ -129,37 +375,8 @@ app.get('/api/location-defaults', (req, res) => {
     res.status(500).json({ message: 'Error fetching location defaults', error: error.message });
   }
 });
-// Test MongoDB connection endpoint
-app.get('/api/test-db', async (req, res) => {
-  try {
-    const dbStatus = mongoose.connection.readyState;
-    const statusMap = {
-      0: 'Disconnected',
-      1: 'Connected', 
-      2: 'Connecting',
-      3: 'Disconnecting'
-    };
 
-    // Try to perform a simple database operation
-    const userCount = await User.countDocuments();
-    
-    res.json({
-      message: 'Database test successful',
-      connectionStatus: statusMap[dbStatus],
-      userCount: userCount,
-      mongodbUri: process.env.MONGODB_URI ? 'Set (hidden)' : 'Not set',
-      nodeEnv: process.env.NODE_ENV
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: 'Database test failed',
-      error: error.message,
-      connectionStatus: mongoose.connection.readyState,
-      mongodbUri: process.env.MONGODB_URI ? 'Set (hidden)' : 'Not set'
-    });
-  }
-});
-// Register (for initial setup)
+// Register
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -168,14 +385,12 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ message: 'Username and password are required' });
     }
     
-    // Check if user already exists
     const existingUser = await User.findOne({ username });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    
     const user = new User({ username, password: hashedPassword });
     await user.save();
     
@@ -189,8 +404,6 @@ app.post('/api/register', async (req, res) => {
 // Login
 app.post('/api/login', async (req, res) => {
   try {
-    console.log('🔐 Login attempt:', req.body.username);
-    
     const { username, password } = req.body;
     
     if (!username || !password) {
@@ -208,8 +421,6 @@ app.post('/api/login', async (req, res) => {
     }
     
     const token = jwt.sign({ userId: user._id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-    
-    console.log('✅ Login successful for:', username);
     
     res.json({ 
       message: 'Login successful',
@@ -259,34 +470,11 @@ app.get('/api/bills/:location', authenticateToken, async (req, res) => {
   }
 });
 
-// Get bill by ID
-app.get('/api/bills/id/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid bill ID' });
-    }
-    
-    const bill = await Bill.findById(id).populate('createdBy', 'username');
-    
-    if (!bill) {
-      return res.status(404).json({ message: 'Bill not found' });
-    }
-    
-    res.json(bill);
-  } catch (error) {
-    console.error('Get bill by ID error:', error);
-    res.status(500).json({ message: 'Error fetching bill', error: error.message });
-  }
-});
-
 // Create new bill
 app.post('/api/bills', authenticateToken, async (req, res) => {
   try {
     const { location, ...otherData } = req.body;
     
-    // Validate required fields
     if (!otherData.billNumber || !otherData.date) {
       return res.status(400).json({ message: 'Bill number and date are required' });
     }
@@ -295,21 +483,15 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
     }
     
-    // Validate items
     if (!otherData.items || !Array.isArray(otherData.items) || otherData.items.length === 0) {
       return res.status(400).json({ message: 'At least one item is required' });
     }
     
-    // Calculate totals if not provided
-    let subtotal = otherData.subtotal;
-    let totalAmount = otherData.totalAmount;
+    // Calculate totals
+    const subtotal = otherData.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const totalAmount = subtotal;
     
-    if (!subtotal || !totalAmount) {
-      subtotal = otherData.items.reduce((sum, item) => sum + (item.amount || 0), 0);
-      totalAmount = subtotal;
-    }
-    
-    // Get defaults for the location and merge with provided data
+    // Get defaults for the location
     const defaults = locationDefaults[location] || locationDefaults.Ratanagiri;
     
     const billData = {
@@ -321,16 +503,9 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
       createdBy: req.user.userId
     };
     
-    // Validate final bill data
     const bill = new Bill(billData);
-    await bill.validate();
-    
     await bill.save();
-    
-    // Populate the createdBy field before sending response
     await bill.populate('createdBy', 'username');
-    
-    console.log(`✅ Bill created successfully: ${bill.billNumber} for ${location}`);
     
     res.status(201).json({
       message: 'Bill created successfully',
@@ -351,207 +526,62 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
-// Update bill
-app.put('/api/bills/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid bill ID' });
-    }
-    
-    const { date, billNumber, items, location, ...otherData } = req.body;
-    
-    // Find existing bill
-    const existingBill = await Bill.findById(id);
-    if (!existingBill) {
-      return res.status(404).json({ message: 'Bill not found' });
-    }
-    
-    // Calculate new amounts if items are updated
-    let updateData = { date, billNumber, ...otherData };
-    
-    if (items && Array.isArray(items)) {
-      const subtotal = items.reduce((sum, item) => sum + (item.amount || 0), 0);
-      updateData.items = items;
-      updateData.subtotal = subtotal;
-      updateData.totalAmount = subtotal;
-    }
-    
-    // If location is changed, apply new defaults for missing fields
-    if (location && location !== existingBill.location) {
-      const defaults = locationDefaults[location] || locationDefaults.Ratanagiri;
-      
-      // Only apply defaults if the corresponding field is not being updated
-      if (!updateData.supplier) updateData.supplier = defaults.supplier;
-      if (!updateData.buyer) updateData.buyer = defaults.buyer;
-      if (!updateData.bankDetails) updateData.bankDetails = defaults.bankDetails;
-      if (!updateData.destination) updateData.destination = defaults.destination;
-      
-      updateData.location = location;
-    }
-    
-    const bill = await Bill.findByIdAndUpdate(
-      id, 
-      updateData, 
-      { new: true, runValidators: true }
-    ).populate('createdBy', 'username');
-    
-    if (!bill) {
-      return res.status(404).json({ message: 'Bill not found' });
-    }
-    
-    console.log(`✅ Bill updated successfully: ${bill.billNumber}`);
-    
-    res.json({
-      message: 'Bill updated successfully',
-      bill
-    });
-  } catch (error) {
-    console.error('Update bill error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({ 
-        message: 'Validation error', 
-        errors 
-      });
-    }
-    
-    res.status(500).json({ message: 'Error updating bill', error: error.message });
-  }
-});
-
-// Delete bill
-app.delete('/api/bills/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid bill ID' });
-    }
-    
-    const bill = await Bill.findByIdAndDelete(id);
-    
-    if (!bill) {
-      return res.status(404).json({ message: 'Bill not found' });
-    }
-    
-    console.log(`🗑️ Bill deleted: ${bill.billNumber}`);
-    
-    res.json({ 
-      message: 'Bill deleted successfully',
-      deletedBill: {
-        billNumber: bill.billNumber,
-        location: bill.location
-      }
-    });
-  } catch (error) {
-    console.error('Delete bill error:', error);
-    res.status(500).json({ message: 'Error deleting bill', error: error.message });
-  }
-});
-
-// Get bill statistics
-app.get('/api/bills-stats/:location', authenticateToken, async (req, res) => {
-  try {
-    const { location } = req.params;
-    
-    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
-      return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
-    }
-    
-    const stats = await Bill.aggregate([
-      { $match: { location } },
-      {
-        $group: {
-          _id: null,
-          totalBills: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmount" },
-          averageAmount: { $avg: "$totalAmount" },
-          minAmount: { $min: "$totalAmount" },
-          maxAmount: { $max: "$totalAmount" }
-        }
-      }
-    ]);
-    
-    const recentBills = await Bill.find({ location })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('billNumber date totalAmount');
-    
-    res.json({
-      location,
-      stats: stats[0] || {
-        totalBills: 0,
-        totalAmount: 0,
-        averageAmount: 0,
-        minAmount: 0,
-        maxAmount: 0
-      },
-      recentBills
-    });
-  } catch (error) {
-    console.error('Get bill stats error:', error);
-    res.status(500).json({ message: 'Error fetching bill statistics', error: error.message });
-  }
-});
-
-// Search bills
-app.get('/api/bills-search/:location', authenticateToken, async (req, res) => {
-  try {
-    const { location } = req.params;
-    const { query } = req.query;
-    
-    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
-      return res.status(400).json({ message: 'Valid location is required (Ratanagiri or Singhururg)' });
-    }
-    
-    if (!query) {
-      return res.status(400).json({ message: 'Search query is required' });
-    }
-    
-    const bills = await Bill.find({
-      location,
-      $or: [
-        { billNumber: { $regex: query, $options: 'i' } },
-        { 'supplier.name': { $regex: query, $options: 'i' } },
-        { 'buyer.name': { $regex: query, $options: 'i' } },
-        { 'items.description': { $regex: query, $options: 'i' } }
-      ]
-    })
-    .populate('createdBy', 'username')
-    .sort({ createdAt: -1 });
-    
-    res.json({
-      location,
-      query,
-      count: bills.length,
-      bills
-    });
-  } catch (error) {
-    console.error('Search bills error:', error);
-    res.status(500).json({ message: 'Error searching bills', error: error.message });
-  }
-});
-
-// Simple 404 handler for all other routes
+// FIXED: 404 handler - Use a simple approach without wildcard
 app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  res.status(404).json({ 
+    message: 'Route not found',
+    path: req.originalUrl,
+    method: req.method,
+    availableEndpoints: [
+      'GET /',
+      'GET /api/health',
+      'GET /api/test-db',
+      'POST /api/create-default-user',
+      'GET /api/location-defaults',
+      'GET /api/location-defaults/:location',
+      'POST /api/register',
+      'POST /api/login',
+      'GET /api/bills',
+      'GET /api/bills/:location',
+      'POST /api/bills'
+    ]
+  });
 });
 
-// Error handling middleware
+// Error handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ message: 'Internal server error' });
+  console.error('💥 Unhandled error:', err);
+  res.status(500).json({ 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'production' ? 'Something went wrong!' : err.message
+  });
 });
 
-app.listen(PORT, () => {
-  console.log('='.repeat(50));
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`📍 API Base: http://localhost:${PORT}/api`);
-  console.log(`🌐 CORS enabled for all origins`);
-  console.log('📊 Available Locations:', Object.keys(locationDefaults).join(', '));
-  console.log('='.repeat(50));
-});
+// For local development only
+if (require.main === module) {
+  const PORT = process.env.PORT || 5001;
+  
+  // Connect to MongoDB when starting locally
+  mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log('✅ MongoDB connected successfully');
+    app.listen(PORT, () => {
+      console.log('='.repeat(60));
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📍 Health: http://localhost:${PORT}/api/health`);
+      console.log(`📍 Test DB: http://localhost:${PORT}/api/test-db`);
+      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log('='.repeat(60));
+    });
+  })
+  .catch((error) => {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  });
+}
+
+// Export for Vercel
+module.exports = app;
