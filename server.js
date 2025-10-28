@@ -7,20 +7,33 @@ const { Bill, User, locationDefaults } = require('./models/Bill');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const JWT_SECRET = 'your-secret-key';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/?appName=Cluster0';
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
+
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://your-frontend-app.vercel.app' // Update this
+];
 // Enable CORS for all routes - MUST BE FIRST
 app.use(cors({
-  origin: true, // Allow any origin for testing
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Body parser
 app.use(express.json());
+// Body parser
 
 // Log all requests
 app.use((req, res, next) => {
@@ -29,12 +42,19 @@ app.use((req, res, next) => {
 });
 
 // Connect to MongoDB
-mongoose.connect('mongodb+srv://Rohit:2428@cluster0.ucayruj.mongodb.net/?appName=Cluster0', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ MongoDB connected successfully'))
-.catch(err => console.error('❌ MongoDB connection error:', err));
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('✅ MongoDB connected successfully');
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+    // Don't exit process in serverless environment
+  }
+};
+connectDB();
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
