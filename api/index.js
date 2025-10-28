@@ -2,7 +2,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/test?retryWrites=true&w=majority';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/billing-system?retryWrites=true&w=majority';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 let cachedClient = null;
@@ -65,11 +65,16 @@ const locationDefaults = {
   }
 };
 
-// Authentication middleware
+// Fixed authentication middleware
 const authenticateToken = (req) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+  const authHeader = req.headers?.authorization;
+  
+  if (!authHeader) {
+    throw new Error('Access token required');
+  }
 
+  const token = authHeader.split(' ')[1];
+  
   if (!token) {
     throw new Error('Access token required');
   }
@@ -97,7 +102,7 @@ module.exports = async (req, res) => {
     const client = await connectToDatabase();
     const db = client.db('billing-system');
 
-    const { path, method } = req;
+    const { path, method, headers } = req;
     const pathParts = path.split('/').filter(part => part);
 
     console.log(`Request: ${method} ${path}`);
@@ -201,59 +206,67 @@ module.exports = async (req, res) => {
 
     // Register user
     if (path === '/api/register' && method === 'POST') {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: 'Username and password are required' });
+      try {
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+          return res.status(400).json({ message: 'Username and password are required' });
+        }
+        
+        const usersCollection = db.collection('users');
+        const existingUser = await usersCollection.findOne({ username });
+        if (existingUser) {
+          return res.status(400).json({ message: 'User already exists' });
+        }
+        
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await usersCollection.insertOne({
+          username,
+          password: hashedPassword,
+          createdAt: new Date()
+        });
+        
+        res.status(201).json({ message: 'User created successfully' });
+      } catch (error) {
+        res.status(500).json({ message: 'Error creating user', error: error.message });
       }
-      
-      const usersCollection = db.collection('users');
-      const existingUser = await usersCollection.findOne({ username });
-      if (existingUser) {
-        return res.status(400).json({ message: 'User already exists' });
-      }
-      
-      const hashedPassword = await bcrypt.hash(password, 10);
-      await usersCollection.insertOne({
-        username,
-        password: hashedPassword,
-        createdAt: new Date()
-      });
-      
-      res.status(201).json({ message: 'User created successfully' });
       return;
     }
 
     // Login
     if (path === '/api/login' && method === 'POST') {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: 'Username and password are required' });
+      try {
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+          return res.status(400).json({ message: 'Username and password are required' });
+        }
+        
+        const usersCollection = db.collection('users');
+        const user = await usersCollection.findOne({ username });
+        if (!user) {
+          return res.status(400).json({ message: 'Invalid credentials' });
+        }
+        
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(400).json({ message: 'Invalid credentials' });
+        }
+        
+        const token = jwt.sign({ userId: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '24h' });
+        
+        res.json({ 
+          message: 'Login successful',
+          token, 
+          user: { id: user._id.toString(), username: user.username } 
+        });
+      } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
       }
-      
-      const usersCollection = db.collection('users');
-      const user = await usersCollection.findOne({ username });
-      if (!user) {
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-      
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-      
-      const token = jwt.sign({ userId: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-      
-      res.json({ 
-        message: 'Login successful',
-        token, 
-        user: { id: user._id.toString(), username: user.username } 
-      });
       return;
     }
 
-    // Get all bills (protected)
+    // Get all bills (protected) - FIXED: Handle missing authorization header
     if (path === '/api/bills' && method === 'GET') {
       try {
         const user = authenticateToken(req);
@@ -267,7 +280,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Get bills by location (protected)
+    // Get bills by location (protected) - FIXED: Handle missing authorization header
     if (pathParts[0] === 'api' && pathParts[1] === 'bills' && pathParts[2] && method === 'GET') {
       try {
         const user = authenticateToken(req);
@@ -291,7 +304,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Create new bill (protected)
+    // Create new bill (protected) - FIXED: Handle missing authorization header
     if (path === '/api/bills' && method === 'POST') {
       try {
         const user = authenticateToken(req);
@@ -364,10 +377,10 @@ module.exports = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Server Error:', error);
     res.status(500).json({
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message
     });
   }
 };
