@@ -6,7 +6,7 @@ const createDefaultUser = async () => {
   try {
     console.log('🔗 Connecting to MongoDB...');
     
-    await mongoose.connect('mongodb+srv://Rohit:2428@cluster0.uh0sdkg.mongodb.net/', {
+    await mongoose.connect('mongodb+srv://Rohit:2428@cluster0.tupbuoz.mongodb.net/?appName=Cluster0', {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
