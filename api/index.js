@@ -295,6 +295,54 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
+// Update bill - ADD THIS ROUTE
+app.put('/api/bills/:billId', authenticateToken, async (req, res) => {
+  try {
+    const { billId } = req.params;
+    const { location, ...billData } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(billId)) {
+      return res.status(400).json({ message: 'Invalid bill ID' });
+    }
+    
+    if (!billData.billNumber || !billData.date) {
+      return res.status(400).json({ message: 'Bill number and date are required' });
+    }
+    
+    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
+      return res.status(400).json({ message: 'Valid location is required' });
+    }
+    
+    const bill = await Bill.findById(billId);
+    
+    if (!bill) {
+      return res.status(404).json({ message: 'Bill not found' });
+    }
+    
+    // Update bill with new data
+    const updatedBill = await Bill.findByIdAndUpdate(
+      billId,
+      {
+        ...billData,
+        location,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    );
+    
+    res.json({
+      message: 'Bill updated successfully',
+      bill: updatedBill
+    });
+  } catch (error) {
+    console.error('Error updating bill:', error);
+    res.status(500).json({ 
+      message: 'Error updating bill', 
+      error: error.message 
+    });
+  }
+});
+
 // Delete bill
 app.delete('/api/bills/:billId', authenticateToken, async (req, res) => {
   try {
@@ -338,6 +386,7 @@ app.get('/', (req, res) => {
       'GET /api/location-defaults/:location',
       'GET /api/bills/:location',
       'POST /api/bills',
+      'PUT /api/bills/:billId',
       'DELETE /api/bills/:billId'
     ]
   });
