@@ -270,7 +270,7 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Bill number and date are required' });
     }
     
-    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
+    if (!location || !['Ratanagiri', 'sindhudurg'].includes(location)) {
       return res.status(400).json({ message: 'Valid location is required' });
     }
     
