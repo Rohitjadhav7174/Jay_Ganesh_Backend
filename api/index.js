@@ -116,7 +116,7 @@ const locationDefaults = {
       branch: "Rajarampuri, Kolhapur, Maharashtra",
       ifsc: "KKBK0000692"
     },
-    destination: "Singhururg",
+    destination: "sindhudurg",
     modeOfPayment: "BANK Transaction"
   }
 };
@@ -245,7 +245,7 @@ app.get('/api/bills/:location', authenticateToken, async (req, res) => {
   try {
     const { location } = req.params;
     
-    if (!location || !['Ratanagiri', 'Singhururg'].includes(location)) {
+    if (!location || !['Ratanagiri', 'sindhudurg'].includes(location)) {
       return res.status(400).json({ message: 'Valid location is required' });
     }
     
