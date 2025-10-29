@@ -82,7 +82,7 @@ const locationDefaults = {
   Ratanagiri: {
     supplier: {
       name: "Sanvi Trading company",
-      address: "H-3 nancy cottage Sant Dnyaneshwar Road, Near Jain Mandir, Nancy Bus Depo, Borivali(East), Mumbai-400066",
+      address: "H-3 nancy cottage Sant Dnyaneshwar Road \n, Near Jain Mandir, Nancy Bus Depo \n, Borivali(East), Mumbai-400066",
       GSTIN: "27AJOPM9365R1ZX" 
     },
     buyer: {
@@ -295,6 +295,36 @@ app.post('/api/bills', authenticateToken, async (req, res) => {
   }
 });
 
+// Delete bill
+app.delete('/api/bills/:billId', authenticateToken, async (req, res) => {
+  try {
+    const { billId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(billId)) {
+      return res.status(400).json({ message: 'Invalid bill ID' });
+    }
+    
+    const bill = await Bill.findById(billId);
+    
+    if (!bill) {
+      return res.status(404).json({ message: 'Bill not found' });
+    }
+    
+    await Bill.findByIdAndDelete(billId);
+    
+    res.json({ 
+      message: 'Bill deleted successfully',
+      deletedBillId: billId
+    });
+  } catch (error) {
+    console.error('Error deleting bill:', error);
+    res.status(500).json({ 
+      message: 'Error deleting bill', 
+      error: error.message 
+    });
+  }
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -307,7 +337,8 @@ app.get('/', (req, res) => {
       'GET /api/location-defaults',
       'GET /api/location-defaults/:location',
       'GET /api/bills/:location',
-      'POST /api/bills'
+      'POST /api/bills',
+      'DELETE /api/bills/:billId'
     ]
   });
 });
