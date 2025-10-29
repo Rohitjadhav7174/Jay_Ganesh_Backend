@@ -99,7 +99,7 @@ const locationDefaults = {
     destination: "Ratanagiri",
     modeOfPayment: "BANK Transaction"
   },
-  Singhururg: {
+  sindhudurg: {
     supplier: {
       name: "PARSHWANATH TRADERS",
       address: "RAJMATA COMPLEX, PARLI, PARLI-V, Beed. Maharasthra 431515",
