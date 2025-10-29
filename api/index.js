@@ -82,7 +82,7 @@ const locationDefaults = {
   Ratanagiri: {
     supplier: {
       name: "Sanvi Trading company",
-      address: "H-3 nancy cottage Sant Dnyaneshwar Road \n  Near Jain Mandir, Nancy Bus Depo \n  Borivali(East), Mumbai-400066",
+      address: "H-3 nancy cottage Sant Dnyaneshwar Road  Near Jain Mandir, Nancy Bus Depo  Borivali(East), Mumbai-400066",
       GSTIN: "27AJOPM9365R1ZX" 
     },
     buyer: {
